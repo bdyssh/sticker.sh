@@ -10,11 +10,6 @@
 #	PT-9800PCN	360 dpi		384 px
 #	PT-P950NW	360 dpi		454 px (virt. 560 px?)
 
-# Name, take it from 'system-config-printer' or so:
-printer="PT-P950"
-#printer="PT-9800PCN"
-#printer="PT-2430PC"
-
 # https://stackoverflow.com/questions/192249/how-do-i-parse-command-line-arguments-in-bash
 # saner programming env: these switches turn some bugs into errors
 #set -o errexit -o pipefail -o noclobber -o nounset
@@ -36,16 +31,20 @@ if [ "$#" = 0 ]; then
 	echo " Version: 0.01"
 	echo " Date: 23.10.2020"
 	echo " Author: www.bdyssh.ru"
-	echo "Usage: $0 -i image.img"
-	echo "$0 -t1 'text1' -t2 'text2'    # planned, TODO"
-	echo "$0 -i img.img --tape 3.5mm --copies 2"
-	echo "$0 -i big_image.img --tape 12mm --split"
-	echo "Other: -t, --tape TAPE; -v, --verbose; -s, --split; -c, --copies INT; -e, --enlarge INT."
+	echo "Usage: $0 ..."
+	echo "-p PT-P950,"
+	echo "-p PT-2430PC -t 9mm    # When no more opts: calculate image height (pixels)."
+	echo "-i image.img"
+	echo "-t1 'text1' -t2 'text2'    # Planned, TODO."
+	echo "-i img.img --tape 3.5mm --copies 2"
+	echo "-i big_image.img --tape 12mm --split"
+	echo "Other:"
+	echo "-t, --tape 36mm; -v, --verbose; -s, --split; -c, --copies 4; -e, --enlarge 2."
 	exit 1
 fi
 
-OPTIONS=i:T1:T2:t:c:e:vyfs
-LONGOPTS=image:,Text1:,Text2:,tape:,verbose,yes,force,split,copies,enlarge
+OPTIONS=vp:t:i:T1:T2:c:e:fsy
+LONGOPTS=verbose,printer:,tape:,image:,Text1:,Text2:,copies:,enlarge:,force,split,yes
 
 # -use ! and PIPESTATUS to get exit code with errexit set
 # -temporarily store output to be able to check for errors
@@ -60,10 +59,27 @@ fi
 # read getopt's output this way to handle the quoting right:
 eval set -- "$PARSED"
 
-verbose=0 yes=0 split=0 img="" text1="" text2="" force=0 installed_tape="" copies=1 enlarge=1
+# Name, take it from 'system-config-printer' or so:
+#printer="PT-P950"
+#printer="PT-9800PCN"
+#printer="PT-2430PC"
+verbose=0 printer="" installed_tape="" img="" text1="" text2="" 
+copies=1 enlarge=1 force=0 split=0 yes=0 
 
 while true; do
 	case "$1" in
+		-v|--verbose)
+			verbose=1
+			shift
+			;;
+		-p|--printer)
+			printer="$2"
+			shift 2
+			;;
+		-t|--tape)
+			installed_tape="$2"
+			shift 2
+			;;
 		-i|--image)
 			img="$2"
 			shift 2
@@ -76,10 +92,6 @@ while true; do
 			text2="$2"
 			shift 2
 			;;
-		-t|--tape)
-			installed_tape="$2"
-			shift 2
-			;;
 		-c|--copies)
 			copies="$2"
 			shift 2
@@ -88,20 +100,16 @@ while true; do
 			enlarge="$2"
 			shift 2
 			;;
-		-v|--verbose)
-			verbose=1
-			shift
-			;;
-		-y|--yes)
-			yes=1
-			shift
-			;;
 		-f|--force)
 			force=1
 			shift
 			;;
 		-s|--split)
 			split=1
+			shift
+			;;
+		-y|--yes)
+			yes=1
 			shift
 			;;
 		--)
@@ -115,10 +123,9 @@ while true; do
 	esac
 done
 
-if (($verbose>0)); then
-	echo " Printer: $printer, img: $img, texts: '$text1' '$text2'"
-fi
-
+#if (($verbose>0)); then
+#	echo " Printer: $printer, img: $img, texts: '$text1' '$text2'"
+#fi
 
 # We need to determine current tape width in order to prolong print head
 # life by not to print outside tape surface. This is most hard, but important
@@ -193,6 +200,8 @@ if (($use_snmp>0)); then
 		echo " Tape width  $installed_tape"
 	fi
 
+# PT-P950 does not distinguish nor report about HG tapes (uses it as ordinary tape).
+# But, PT-9800PCN differ:
 	if [[ "$installed_tape" == *HG* ]]; then  
 		if (($force == 0)); then
 			echo "HG tapes are not reliable, due to they force unavoidable high-speed print, and it eating pixels. But, 24 mm ones can be easily fixed by drilling 3rd index hole at back side: (other widths also, just compare index holes to same width non-HG)"
@@ -313,6 +322,14 @@ if (($verbose>0)); then
 	echo " Tape width (parsed) $tape_width ($tape_pixels px), head dots $printhead_dots (bytes $printhead_bytes), margin $margin."
 fi
 
+if [[ "$img" == "" ]]; then  
+# We hope this is useful tip. Good for create new images.
+	echo " * Note: For this printer and tape combination, we have $tape_pixels px. height."
+# This is not an error, when image not supplied, we suggest user its future dimension.
+# So we use hormal exit.
+	exit 0 
+fi
+
 # Main job: prepare print file with raw binary data.
 
 echo "" > pt.prn
@@ -413,5 +430,5 @@ fi
 
 lpr -C "$img" -P "$printer" -o raw pt.prn
 
-echo "Done."
+echo "Done. Print job was sent to printer."
 exit 0
