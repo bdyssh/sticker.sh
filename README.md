@@ -1,2 +1,2 @@
 # sticker.sh
-Dot-for-dot printing for Brother USB, LAN, and serial laminated label printers
+Dot-for-dot printing for Brother USB, LAN, USB-to-LAN via Print Server, and serial laminated label printers.
