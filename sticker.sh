@@ -12,7 +12,7 @@
 #  PT-P950NW   360 dpi  454 px (virt. 560 px?)
 
 # Debug helper
-function dmsg { if (($verbose>0)); then echo " Debug: $1"; fi }
+function debug_msg { if (($verbose>0)); then echo " Debug: $1"; fi }
 
 # https://stackoverflow.com/questions/192249/how-do-i-parse-command-line-arguments-in-bash
 # saner programming env: these switches turn some bugs into errors
@@ -138,9 +138,12 @@ done
 # "Appendix A: USB Specifications" at "Raster Command Reference" says nothing new.
 # Also may be USB-ETH wrapper can be born in future somewhere.
 # So currently we will ask user for installed tape width for USB printer.
+# Added later: Try to use USB-to-LAN "Print Server": Still no have any return packets with 
+# printer status after 255*\\x00 \\x1b\\x40 \\x1b\\x69\\x53 print job. Maybe 
+# it is impossible with LPD packets at all.
 
 printer_device=$(lpstat -v $printer)
-dmsg "Device string '$printer_device'"
+debug_msg "Device string '$printer_device'"
 
 use_snmp=0
 
@@ -157,24 +160,56 @@ case "$printer_device" in
     ;;
 esac
 
-dmsg "Use SNMP: $use_snmp"
+# What if printer does not have SNMP, even it is at LAN? 
+# Example: non-LAN printer, connected via print server.
+if (($use_snmp>0)); then
+  set +e # handle errors by ourself, or tell bash not to exit on nonzero returncode.
+  printer_ip=$(grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' <<< "$printer_device")
+#returncode=$?
+# Check if device is printer: (not work for print server)
+# 1.3.6.1.2.1.25.3.2.1.2.1 = should be OID: .1.3.6.1.2.1.25.3.1.5
+  is_printer=$(snmpget -Oqvn -v 1 -r 3 -t 0.1 -c public $printer_ip 1.3.6.1.2.1.25.3.2.1.2.1)
+#returncode=$?
+  set -e # handle errors by bash: exit on any error.
+  debug_msg "Printer_IP: $printer_ip"
+  debug_msg "Is Printer?: $is_printer"
+# Unfortunately, both 9800PCN and P950 are "does not fully support the Host MIB" ,
+# so only we can is to use (ugly) workaround.
+#  if [[ "$is_printer" == *1.3.6.1.2.1.25.3.1.5* ]]; then  # as it should be
+  if [[ "$is_printer" == *1.3* ]]; then  # workaround
+    debug_msg "Device is printer and have SNMP."
+  else
+    echo "Printer is on LAN, but does not have SNMP (may be it is print server)."
+    echo "(When just turned on: Printer may be not finish SNMP stack initialize yet.)"
+    echo "Expect 4 seconds delay before printing, due to CUPS will wait for SNMP reply."
+    use_snmp=0
+  fi
+fi
+
+debug_msg "Use SNMP: $use_snmp"
+
+# exit 0
+
+# more on SNMP for CUPS: (but i still not found how to turn it off, 
+#  why? - not work and adds delays via print server).
+# https://www.cups.org/blog/2006-06-05-debugging-snmp-printer-detection-problems.html
 
 if (($use_snmp>0)); then
-  printer_ip=$(grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' <<< "$printer_device")
-  dmsg "Printer_IP: $printer_ip"
-  
+#  printer_ip=$(grep -oE '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' <<< "$printer_device")
+#  debug_msg "Printer_IP: $printer_ip"
+
 # 1.3.6.1.2.1.25.3.2.1.3.1 = STRING: "Brother PT-9800PCN"
   printer_type=$(snmpget -Oqv -v 1 -c public $printer_ip 1.3.6.1.2.1.25.3.2.1.3.1)
-  dmsg "Type: $printer_type"
+  debug_msg "Type: $printer_type"
 
 # 1.3.6.1.2.1.43.16.5.1.2.1.1
 # also status as integer: 1.3.6.1.2.1.43.18.1.1.6.1.1 = INTEGER: 10001 (good), or others.
   printer_status=$(snmpget -Oqv -v 1 -c public $printer_ip 1.3.6.1.2.1.43.16.5.1.2.1.1)
-  echo "Status: $printer_status"
+  debug_msg "Status: $printer_status"
 # wildcards / partial match - looks like work. 23.10.2020
 # https://stackoverflow.com/questions/2237080/how-to-compare-strings-in-bash
   if [[ "$printer_status" == *READY* ]]; then  
-    dmsg "OK, we continue."
+    debug_msg "OK, we continue."
   else
     echo "Printer error: "$printer_status
     exit 1
@@ -183,7 +218,7 @@ if (($use_snmp>0)); then
 # now, only when it ready, get tape width will work correctly:
 # ex. 1.3.6.1.2.1.43.8.2.1.12.1.1 = STRING: "36mm / 1-1/2\""
   installed_tape=$(snmpget -Oqv -v 1 -c public $printer_ip 1.3.6.1.2.1.43.8.2.1.12.1.1)
-  echo "Tape width: $installed_tape"
+  debug_msg "Tape width: $installed_tape"
 
 # PT-P950 does not distinguish nor report about HG tapes (uses it as ordinary tape).
 # But, PT-9800PCN differ:
@@ -238,7 +273,7 @@ case "$printer_type" in
     ;;
 esac
 
-dmsg "Print head dots: $printhead_dots"
+debug_msg "Print head dots: $printhead_dots"
 
 # 'tape_pixels' matched to 360 dpi. For other dpi, recalculate below.
 case "$installed_tape" in
@@ -292,14 +327,14 @@ tape_pixels=$(( $tape_pixels * $dpi_div ))
 
 # Check if tape is wider than head 
 if (($tape_pixels>$printhead_dots)); then
-  dmsg "Trimmed max tape pixels from $tape_pixels to $printhead_dots due to print head capability."
+  debug_msg "Trimmed max tape pixels from $tape_pixels to $printhead_dots due to print head capability."
   tape_pixels=$printhead_dots
 fi
 
 margin=$(( ($printhead_dots - $tape_pixels)/2 ))
 printhead_bytes=$(( ($printhead_dots + 7) / 8 ))
 
-dmsg "Tape width (parsed) $tape_width ($tape_pixels px), head dots $printhead_dots (bytes $printhead_bytes), margin $margin."
+debug_msg "Tape width (parsed) $tape_width ($tape_pixels px), head dots $printhead_dots (bytes $printhead_bytes), margin $margin."
 
 if [[ "$img" == "" ]]; then  
 # We hope this is useful tip. Good for create new images.
@@ -333,7 +368,7 @@ img_w=`identify -ping -format '%w' temp1.png`
 # min img_h at 360 dpi = 57 px, max = 14173 px, check it later. TODO
 img_h=`identify -ping -format '%h' temp1.png`
 pages=$(( ($img_w-1) / $tape_pixels + 1 ))
-dmsg "Image w, h; pages (for split prints): $img_w, $img_h, $pages"
+debug_msg "Image w, h; pages (for split prints): $img_w, $img_h, $pages"
 
 if (($split==0)); then
   pages=1
@@ -379,7 +414,7 @@ for((copy=0; copy<$copies; copy++)); do
 
   shift=$(( $tape_pixels * page ))
   convert -quiet temp2.png -crop "$tape_pixels"x+"$shift"+0 temp3.png # debug: temp3"$page".png
-  dmsg "Page, shift: $page, $shift"
+  debug_msg "Page, shift: $page, $shift"
 
   convert -quiet temp3.png -background white -gravity center -extent "$printhead_dots"x -monochrome -colors 2 -depth 1 -negate r:img.raw
 
