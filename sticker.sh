@@ -7,7 +7,7 @@
 
 # Tested printers:
 #  PT-1230PC   180 dpi  64 px
-#  PT-2430PC   180 dpi  128 px
+#  PT-2430PC   180 dpi  128 px  (tested as USB directly, and via USB-LAN Print server)
 #  PT-9800PCN  360 dpi  384 px
 #  PT-P950NW   360 dpi  454 px (virt. 560 px?)
 
@@ -387,48 +387,48 @@ convert -quiet temp1.png -background white -gravity center -extent "$total_width
 
 for((copy=0; copy<$copies; copy++)); do 
   for((page=0; page<$pages; page++)); do 
-  first_middle_last_page=1 # middle
-  if ((copy == 0)); then
-    if ((page == 0)); then
-      first_middle_last_page=0 # first
+    first_middle_last_page=1 # middle
+    if ((copy == 0)); then
+      if ((page == 0)); then
+        first_middle_last_page=0 # first
+      fi
     fi
-  fi
-  if ((copy == $copies-1)); then
-    if ((page == $pages-1)); then
-      first_middle_last_page=2 # last or single page
+    if ((copy == $copies-1)); then
+      if ((page == $pages-1)); then
+        first_middle_last_page=2 # last or single page
+      fi
     fi
-  fi
-  
-  if (($need_extra_header>0)); then
+    
+    if (($need_extra_header>0)); then
 # Clear buffer and transferred lines q'ty. It is important for every 'page'.
-    echo -n -e \\x1b\\x40 >> pt.prn    
+      echo -n -e \\x1b\\x40 >> pt.prn    
 # This ESC seq. required for PT-P9100/900W/950NW (and maybe PT-P910BT); 
 #  are others like 9800PCN can live with it ?! TODO Added: Yes, 9800PCN not fear it.
-    h_lsbyte=$(( $img_h % 256 ))
-    h_msbyte=$(( $img_h / 256 ))
-    echo -n -e \\x1b\\x69\\x7a\\x80\\x00\\x00\\x00\\x$(printf %x "$h_lsbyte")\\x$(printf %x "$h_msbyte")\\x00\\x00\\x$(printf %x "$first_middle_last_page")\\x00 >> pt.prn 
+      h_lsbyte=$(( $img_h % 256 ))
+      h_msbyte=$(( $img_h / 256 ))
+      echo -n -e \\x1b\\x69\\x7a\\xC0\\x09\\x00\\x00\\x$(printf %x "$h_lsbyte")\\x$(printf %x "$h_msbyte")\\x00\\x00\\x$(printf %x "$first_middle_last_page")\\x00 >> pt.prn 
 # Will transfer bitmap after it.
-    echo -n -e \\x4d\\x00 >> pt.prn
-    echo -n -e \\x1b\\x69\\x52\\x01 >> pt.prn
-  fi
-
-  shift=$(( $tape_pixels * page ))
-  convert -quiet temp2.png -crop "$tape_pixels"x+"$shift"+0 temp3.png # debug: temp3"$page".png
-  debug_msg "Page, shift: $page, $shift"
-
-  convert -quiet temp3.png -background white -gravity center -extent "$printhead_dots"x -monochrome -colors 2 -depth 1 -negate r:img.raw
-
-  for((i=0; i<$img_h; i++)); do 
-    echo -n -e "G"\\x$(printf %x "$printhead_bytes")\\x00 >> pt.prn; 
-    dd if=img.raw of=pt.prn bs=$printhead_bytes count=1 skip=$i oflag=append conv=notrunc > /dev/null 2>&1; 
-  done; 
-
+      echo -n -e \\x4d\\x00 >> pt.prn
+      echo -n -e \\x1b\\x69\\x52\\x01 >> pt.prn
+    fi
+  
+    shift=$(( $tape_pixels * page ))
+    convert -quiet temp2.png -crop "$tape_pixels"x+"$shift"+0 temp3.png # debug: temp3"$page".png
+    debug_msg "Page, shift: $page, $shift"
+  
+    convert -quiet temp3.png -background white -gravity center -extent "$printhead_dots"x -monochrome -colors 2 -depth 1 -negate r:img.raw
+  
+    for((i=0; i<$img_h; i++)); do 
+      echo -n -e "G"\\x$(printf %x "$printhead_bytes")\\x00 >> pt.prn; 
+      dd if=img.raw of=pt.prn bs=$printhead_bytes count=1 skip=$i oflag=append conv=notrunc > /dev/null 2>&1; 
+    done; 
+  
 # This works for both USB and network printers, and maybe some others.
-  eop_marker="\\x0c" # page feed (+ half cut if possible).
-  if (($first_middle_last_page == 2)); then
-    eop_marker="\\x1a" # done print job (cut tape).
-  fi
-  echo -n -e "$eop_marker" >> pt.prn; 
+    eop_marker="\\x0c" # page feed (+ half cut if possible).
+    if (($first_middle_last_page == 2)); then
+      eop_marker="\\x1a" # done print job (cut tape).
+    fi
+    echo -n -e "$eop_marker" >> pt.prn; 
   done; 
 done; 
 
