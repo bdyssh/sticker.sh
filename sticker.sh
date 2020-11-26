@@ -47,8 +47,8 @@ if [ "$#" = 0 ]; then
   exit 1
 fi
 
-OPTIONS=vp:t:i:T1:T2:c:e:fsy
-LONGOPTS=verbose,printer:,tape:,image:,Text1:,Text2:,copies:,enlarge:,force,split,yes
+OPTIONS=vp:t:i:T1:T2:c:e:r:fsy
+LONGOPTS=verbose,printer:,tape:,image:,Text1:,Text2:,copies:,enlarge:,rotate:,force,split,yes
 
 # -use ! and PIPESTATUS to get exit code with errexit set
 # -temporarily store output to be able to check for errors
@@ -68,7 +68,7 @@ eval set -- "$PARSED"
 #printer="PT-9800PCN"
 #printer="PT-2430PC"
 verbose=0 printer="" installed_tape="" img="" text1="" text2="" 
-copies=1 enlarge=1 force=0 split=0 yes=0 
+copies=1 enlarge=1 rotate=0 force=0 split=0 yes=0 
 
 while true; do
   case "$1" in
@@ -104,6 +104,10 @@ while true; do
       enlarge="$2"
       shift 2
       ;;
+    -r|--rotate)
+      rotate="$2"
+      shift 2
+      ;;
     -f|--force)
       force=1
       shift
@@ -126,6 +130,11 @@ while true; do
       ;;
   esac
 done
+
+if [[ "$printer" == "" ]]; then  
+  echo " * Error: Printer name is missing."
+  exit 1
+fi
 
 # We need to determine current tape width in order to prolong print head
 # life by not to print outside tape surface. This is most hard, but important
@@ -362,7 +371,25 @@ if (($need_extra_header>0)); then
   echo -n -e \\x1b\\x69\\x4b\\x0c >> pt.prn
 fi
 
-convert -quiet "$img" -resize "$enlarge"00% -flop -rotate 90 temp1.png
+img_w=`identify -quiet -ping -format '%w' $img`
+img_h=`identify -quiet -ping -format '%h' $img`
+debug_msg "Image w, h orig.: $img_w, $img_h"
+#rotate=0
+# WAS: We use vertical imare as normal (portrait), if label is horizonlal, will be rotated.
+# NOW: Exactly user commanded.
+#  debug_msg "AI detects that image need to be rotated."
+#  rotate=90
+if (($img_h > $img_w)); then  # portrait detected
+  if (( (($img_h * $enlarge)) <= $tape_pixels)); then
+    echo " * Note: AI detects that image can be rotated to save tape, like '--rotate 90'."
+  fi
+fi
+
+#  Now: Absolute correct pixel copying: 
+#       (and note confusing key name "-sample" which actually NOT uses resampling).
+convert -quiet "$img" -sample "$enlarge"00% -flop -rotate $rotate temp1.png
+#  Was: This uses cubic resampling, which is exactly what we NOT need!
+# convert -quiet "$img" -resize "$enlarge"00% -flop -rotate $rotate temp1.png
 
 img_w=`identify -ping -format '%w' temp1.png`
 # min img_h at 360 dpi = 57 px, max = 14173 px, check it later. TODO
@@ -374,7 +401,9 @@ if (($split==0)); then
   pages=1
   if (($img_w>$tape_pixels)); then
     echo "ERROR: Image width $img_w more than tape width $tape_pixels."
-    echo "Either use -s,--split to multi pieces print, or reduce image width."
+    echo "What to do: use -s,--split to multi pieces print;"
+    echo "     and/or use -r,--rotate 90 (if not already potrait);"
+    echo "     and/or reduce image width."
     exit 1
   fi
 fi
